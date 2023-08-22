@@ -232,8 +232,8 @@ export interface VNode<
 // structure would be stable. This allows us to skip most children diffing
 // and only worry about the dynamic nodes (indicated by patch flags).
 // 模板编译和渲染过程中的节点分块处理
-export const blockStack: (VNode[] | null)[] = []
-export let currentBlock: VNode[] | null = null
+export const blockStack: (VNode[] | null)[] = [] // 所有待追踪块
+export let currentBlock: VNode[] | null = null // 当前结点所在的父块
 
 /**
  * Open a block.
@@ -495,23 +495,29 @@ function createBaseVNode(
 
   // track vnode for block tree
   if (
-    isBlockTreeEnabled > 0 && // 如果当前块
+    isBlockTreeEnabled > 0 && // 如果当前需要追踪的块数量大于0
     // avoid a block node from tracking itself
-    !isBlockNode &&
+    !isBlockNode && // 确保当前VNode不是一个块节点本身，避免块节点自己追踪自己
     // has current parent block
-    currentBlock &&
+    currentBlock && // 确保当前存在父块，即当前正在进行块的处理
     // presence of a patch flag indicates this node needs patching on updates.
     // component nodes also should always be patched, because even if the
     // component doesn't need to update, it needs to persist the instance on to
     // the next vnode so that it can be properly unmounted later.
+    /**
+     * 存在patch标志，表示该节点在更新时需要进行patch。
+     * 对于组件节点，无论是否需要更新，都应该进行patch操作，
+     * 因为需要将组件实例保留到下一个VNode中，以便后续正确卸载
+     */
     (vnode.patchFlag > 0 || shapeFlag & ShapeFlags.COMPONENT) &&
     // the EVENTS flag is only for hydration and if it is the only flag, the
     // vnode should not be considered dynamic due to handler caching.
+    // 确保patch标志不是PatchFlags.HYDRATE_EVENTS
     vnode.patchFlag !== PatchFlags.HYDRATE_EVENTS
   ) {
     currentBlock.push(vnode)
   }
-
+  // 兼容模式下
   if (__COMPAT__) {
     convertLegacyVModelProps(vnode)
     defineLegacyVNodeProperties(vnode)
@@ -522,6 +528,13 @@ function createBaseVNode(
 
 export { createBaseVNode as createElementVNode }
 
+// 实际用于创建虚拟结点的方法
+/**
+ * 如果__DEV__为真，createVNode使用createVNodeWithArgsTransform函数作为实现。
+ * createVNodeWithArgsTransform函数可能会进行一些参数转换和处理，以支持开发环境下的额外功能和调试信息。
+ * 如果__DEV__为假，createVNode使用_createVNode函数作为实现。
+ * _createVNode函数是一个正常的创建VNode的函数，不进行额外的参数转换或处理
+ */
 export const createVNode = (
   __DEV__ ? createVNodeWithArgsTransform : _createVNode
 ) as typeof _createVNode
@@ -647,6 +660,7 @@ export function cloneVNode<T, U>(
     type: vnode.type,
     props: mergedProps,
     key: mergedProps && normalizeKey(mergedProps),
+    // 分别处理是否合并的ref
     ref:
       extraProps && extraProps.ref
         ? // #2078 in the case of <component :is="vnode" ref="extra"/>
@@ -672,6 +686,7 @@ export function cloneVNode<T, U>(
     // existing patch flag to be reliable and need to add the FULL_PROPS flag.
     // note: preserve flag for fragments since they use the flag for children
     // fast paths only.
+    // 用于diff算法的更新
     patchFlag:
       extraProps && vnode.type !== Fragment
         ? patchFlag === -1 // hoisted node
@@ -707,6 +722,7 @@ export function cloneVNode<T, U>(
  * Dev only, for HMR of hoisted vnodes reused in v-for
  * https://github.com/vitejs/vite/issues/2022
  */
+// 递归对虚拟结点树进行深度拷贝
 function deepCloneVNode(vnode: VNode): VNode {
   const cloned = cloneVNode(vnode)
   if (isArray(vnode.children)) {
@@ -718,6 +734,9 @@ function deepCloneVNode(vnode: VNode): VNode {
 /**
  * @private
  */
+// 创建文本虚拟结点
+// 例如：createTextVNode("hello world")
+// 渲染为：hello world
 export function createTextVNode(text: string = ' ', flag: number = 0): VNode {
   return createVNode(Text, null, text, flag)
 }
@@ -725,6 +744,10 @@ export function createTextVNode(text: string = ' ', flag: number = 0): VNode {
 /**
  * @private
  */
+// 创建静态结点
+// 例如：content = `<div>Static Content</div>`, numberOfNodes = 2
+// 渲染：
+// <div>Static Content</div> <div>Static Content</div>
 export function createStaticVNode(
   content: string,
   numberOfNodes: number
@@ -739,6 +762,10 @@ export function createStaticVNode(
 /**
  * @private
  */
+// 创建一个注释VNode
+// 例如：createCommentVNode('Comment 1')
+// 渲染为：<!-- Comment 1 -->
+// 其他用途： 分支占位，占位（在需要空出位置,但不渲染内容的场景下），分割线，性能优化（真实dom没有这个类型的vnode）
 export function createCommentVNode(
   text: string = '',
   // when used as the v-else branch, the comment node must be created as a
@@ -750,12 +777,15 @@ export function createCommentVNode(
     : createVNode(Comment, null, text)
 }
 
+// 规范化VNode子节点
 export function normalizeVNode(child: VNodeChild): VNode {
   if (child == null || typeof child === 'boolean') {
     // empty placeholder
+    // 如果child为空或布尔值, 返回一个Comment占位VNode
     return createVNode(Comment)
   } else if (isArray(child)) {
     // fragment
+    // 如果是数组, 返回一个Fragment VNode包裹数组
     return createVNode(
       Fragment,
       null,
@@ -765,14 +795,24 @@ export function normalizeVNode(child: VNodeChild): VNode {
   } else if (typeof child === 'object') {
     // already vnode, this should be the most common since compiled templates
     // always produce all-vnode children arrays
+    // 如果已经是VNode对象, 直接返回深拷贝一份(cloneIfMounted)
     return cloneIfMounted(child)
   } else {
     // strings and numbers
+    // 其他情况(字符串、数字)返回一个Text VNode
     return createVNode(Text, null, String(child))
   }
 }
 
 // optimized normalization for template-compiled render fns
+/**
+ * 如果VNode没有el(未挂载)且patchFlag不是HOISTED类型
+ *  HOISTED类型是静态节点,不需要重新渲染
+ *  未挂载节点直接返回
+ * 如果VNode是memo类型
+ *  memo节点会进行浅比较,直接返回
+ * 其他情况调用cloneVNode进行深拷贝
+ */
 export function cloneIfMounted(child: VNode): VNode {
   return (child.el === null && child.patchFlag !== PatchFlags.HOISTED) ||
     child.memo
@@ -780,18 +820,24 @@ export function cloneIfMounted(child: VNode): VNode {
     : cloneVNode(child)
 }
 
+// 规范化子节点
 export function normalizeChildren(vnode: VNode, children: unknown) {
   let type = 0
   const { shapeFlag } = vnode
   if (children == null) {
+    // 无子节点
     children = null
   } else if (isArray(children)) {
+    // 多个子节点的数组
     type = ShapeFlags.ARRAY_CHILDREN
   } else if (typeof children === 'object') {
+    // 单个子节点对象
     if (shapeFlag & (ShapeFlags.ELEMENT | ShapeFlags.TELEPORT)) {
+      // 元素结点或传送门
       // Normalize slot to plain children for plain element and Teleport
       const slot = (children as any).default
       if (slot) {
+        // 槽元素作为子节点时，将槽内结点规范化并存为子节点
         // _c marker is added by withCtx() indicating this is a compiled slot
         slot._c && (slot._d = false)
         normalizeChildren(vnode, slot())
@@ -835,6 +881,7 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
   vnode.shapeFlag |= type
 }
 
+// 合并属性
 export function mergeProps(...args: (Data & VNodeProps)[]) {
   const ret: Data = {}
   for (let i = 0; i < args.length; i++) {
@@ -842,18 +889,22 @@ export function mergeProps(...args: (Data & VNodeProps)[]) {
     for (const key in toMerge) {
       if (key === 'class') {
         if (ret.class !== toMerge.class) {
+          // 直接将所有class属性存入数组，normalizeClass会递归处理
           ret.class = normalizeClass([ret.class, toMerge.class])
         }
       } else if (key === 'style') {
+        // style与class类似
         ret.style = normalizeStyle([ret.style, toMerge.style])
       } else if (isOn(key)) {
-        const existing = ret[key]
-        const incoming = toMerge[key]
+        // 判断是否是事件处理属性，比如onClick等以on开头的属性
+        const existing = ret[key] // 现有的
+        const incoming = toMerge[key] // 新增的
         if (
           incoming &&
-          existing !== incoming &&
+          existing !== incoming && // 如果是两个不同的属性
           !(isArray(existing) && existing.includes(incoming))
         ) {
+          //
           ret[key] = existing
             ? [].concat(existing as any, incoming as any)
             : incoming
@@ -866,12 +917,14 @@ export function mergeProps(...args: (Data & VNodeProps)[]) {
   return ret
 }
 
+// 导出用于调用 VNode 钩子函数的函数
 export function invokeVNodeHook(
   hook: VNodeHook,
   instance: ComponentInternalInstance | null,
   vnode: VNode,
   prevVNode: VNode | null = null
 ) {
+  // 使用异步错误处理调用钩子函数
   callWithAsyncErrorHandling(hook, instance, ErrorCodes.VNODE_HOOK, [
     vnode,
     prevVNode
