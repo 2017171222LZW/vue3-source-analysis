@@ -16,6 +16,7 @@ export let isHmrUpdating = false
 
 export const hmrDirtyComponents = new Set<ConcreteComponent>()
 
+// Hot Module Replacement
 export interface HMRRuntime {
   createRecord: typeof createRecord
   rerender: typeof rerender
